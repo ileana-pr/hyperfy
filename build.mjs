@@ -4,6 +4,7 @@ import path from 'path'
 import { fork } from 'child_process'
 import * as esbuild from 'esbuild'
 import { fileURLToPath } from 'url'
+import { buildWorlds } from './build.worlds.mjs'
 
 const dev = process.argv.includes('--dev')
 const dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -11,6 +12,9 @@ const rootDir = path.join(dirname, './')
 const buildDir = path.join(rootDir, 'build')
 
 await fs.emptyDir(buildDir)
+
+// Build worlds
+await buildWorlds(buildDir)
 
 /**
  * Build Client
@@ -108,14 +112,37 @@ let spawn
       {
         name: 'server-finalize-plugin',
         setup(build) {
+          // Handle world imports
+          build.onResolve({ filter: /^\.\.\/worlds\// }, args => {
+            const absolutePath = path.join(rootDir, args.path.replace('../', ''))
+            return { path: absolutePath }
+          })
+
+          // Handle three.js imports
+          build.onResolve({ filter: /^three$/ }, args => {
+            return { external: true }
+          })
+          
           build.onEnd(async result => {
             // copy over physx wasm
             const physxWasmSrc = path.join(rootDir, 'src/server/physx/physx-js-webidl.wasm')
             const physxWasmDest = path.join(rootDir, 'build/physx-js-webidl.wasm')
             await fs.copy(physxWasmSrc, physxWasmDest)
-            // start the server or stop here
+            
+            // Copy worlds directory with all assets
+            const worldsSrc = path.join(rootDir, 'worlds')
+            const worldsDest = path.join(clientBuildDir, 'worlds')
+            console.log('Copying worlds from:', worldsSrc)
+            console.log('Copying worlds to:', worldsDest)
+            await fs.ensureDir(worldsDest)
+            await fs.copy(worldsSrc, worldsDest, {
+              filter: (src) => {
+                console.log('Copying file:', src)
+                return true
+              }
+            })
+            
             if (dev) {
-              // (re)start server
               spawn?.kill('SIGTERM')
               spawn = fork(path.join(rootDir, 'build/index.js'))
             } else {
@@ -125,7 +152,11 @@ let spawn
         },
       },
     ],
-    loader: {},
+    loader: {
+      '.js': 'jsx',
+      '.glb': 'file',
+      '.gltf': 'file',
+    },
   })
   if (dev) {
     await serverCtx.watch()

@@ -1,0 +1,12 @@
+{
+  "name": "VIPE World",
+  "description": "A custom world built with Hyperfy",
+  "version": "1.0.0",
+  "assets": {
+    "baseUrl": "/worlds/VIPE/assets"
+  },
+  "spawn": {
+    "position": [0, 0, 0],
+    "rotation": [0, 0, 0]
+  }
+}

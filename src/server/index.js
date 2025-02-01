@@ -11,36 +11,63 @@ import statics from '@fastify/static'
 import multipart from '@fastify/multipart'
 
 import { loadPhysX } from './physx/loadPhysX'
-
+import { config } from './config'
 import { createServerWorld } from '../core/createServerWorld'
 import { hashFile } from '../core/utils-server'
 
-const rootDir = path.join(__dirname, '../')
-const worldDir = path.join(rootDir, 'world')
-const assetsDir = path.join(rootDir, 'world/assets')
+const rootDir = process.cwd()
+const worldPath = path.join(rootDir, 'worlds/vipe/scene.js')
+const { VIPEWorld } = await import(worldPath)
+
+const worldDir = path.join(rootDir, config.worldPath)
+const assetsDir = path.join(rootDir, config.assetsPath)
+const worldsDir = path.join(rootDir, 'worlds')
+const vipeAssetsDir = path.join(rootDir, 'worlds/vipe/assets')
+const publicDir = path.join(rootDir, 'public')
 const port = process.env.PORT
 
 await fs.ensureDir(worldDir)
 await fs.ensureDir(assetsDir)
+await fs.ensureDir(publicDir)
 
 // copy core assets
 await fs.copy(path.join(rootDir, 'src/core/assets'), path.join(assetsDir))
 
+// ensure VIPE assets directory exists and copy assets if needed
+await fs.ensureDir(vipeAssetsDir)
+
+// copy VIPE assets to build if they don't exist
+const buildVipeAssetsDir = path.join(rootDir, 'build/worlds/vipe/assets')
+await fs.ensureDir(buildVipeAssetsDir)
+await fs.copy(vipeAssetsDir, buildVipeAssetsDir, { overwrite: true })
+
 const world = createServerWorld()
 world.init({ loadPhysX })
+
+// Initialize our custom world
+const vipeWorld = new VIPEWorld(world)
+await vipeWorld.init()
 
 const fastify = Fastify({ logger: { level: 'error' } })
 
 fastify.register(cors)
 fastify.register(compress)
+
+// Register static file serving for public directory first
 fastify.register(statics, {
-  root: path.join(__dirname, 'public'),
+  root: publicDir,
   prefix: '/',
+  serve: true,
+  decorateReply: true
+})
+
+fastify.register(statics, {
+  root: worldsDir,
+  prefix: '/worlds/',
   decorateReply: false,
   setHeaders: res => {
-    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate')
-    res.setHeader('Pragma', 'no-cache')
-    res.setHeader('Expires', '0')
+    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable')
+    res.setHeader('Expires', new Date(Date.now() + 31536000000).toUTCString())
   },
 })
 fastify.register(statics, {
@@ -60,6 +87,16 @@ fastify.register(multipart, {
 })
 fastify.register(ws)
 fastify.register(worldNetwork)
+
+// Add root route handler to serve index.html
+fastify.get('/', async (request, reply) => {
+  return reply.type('text/html').send(await fs.readFile(path.join(publicDir, 'index.html')))
+})
+
+// Add route for client.js
+fastify.get('/client.js', async (request, reply) => {
+  return reply.type('application/javascript').send(await fs.readFile(path.join(publicDir, 'client.js')))
+})
 
 fastify.post('/api/upload', async (req, reply) => {
   const file = await req.file()
